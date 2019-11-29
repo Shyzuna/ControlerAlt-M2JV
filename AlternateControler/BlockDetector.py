@@ -1,10 +1,22 @@
 import cv2
 import numpy as np
+import os
+from pathlib import Path
 
 class BlockDetector(object):
     def __init__(self):
         self._initParametersWindow()
         self._capture = None
+        self._templateImgs = {}
+        self._lastContours = None
+        self._imgNbr = 1  # Do smth in order to start at the right number
+        path = Path()
+        self._pathToSave = Path.joinpath(path.absolute(), 'data')
+        self.LoadTemplateImg(0)
+        self._templateFilledIn = 0.0
+        self._templateFilledOut = 0.0
+        self._totalPixel = 0.0
+        self._templatePixel = 0.0
 
     def _emptyCallBack(self, arg):
         pass
@@ -13,15 +25,16 @@ class BlockDetector(object):
         cv2.namedWindow('Parameters')
         cv2.createTrackbar('Threshold', 'Parameters', 0, 255, self._emptyCallBack)
         cv2.createTrackbar('FillContours', 'Parameters', 0, 1, self._emptyCallBack)
+        cv2.createTrackbar('UseTemplate', 'Parameters', 0, 1, self._emptyCallBack)
 
     def FindCountours(self, processedImg, base):
         # Find contours
-        contours, h = cv2.findContours(processedImg.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for contour in contours:
+        self._lastContours, h = cv2.findContours(processedImg.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in self._lastContours:
             if cv2.getTrackbarPos('FillContours', 'Parameters') == 1:
-                cv2.fillPoly(base, [contour], (0, 0, 255))
+                cv2.fillPoly(base, [contour], (255, 0, 0))
             else:
-                cv2.drawContours(base, [contour], -1, (0, 0, 255), 2)
+                cv2.drawContours(base, [contour], -1, (255, 0, 0), 2)
         return base
 
     def CheckFunction(self, frame):
@@ -49,16 +62,81 @@ class BlockDetector(object):
         cv2.imshow('closed', closed)
         return closed
 
+    def SaveFrameAsTemplate(self, size):
+        crtImg = np.zeros(shape=[size[0], size[1], 4])
+        filledImg = np.zeros(shape=[size[0], size[1], 3])
+        for contour in self._lastContours:
+            cv2.drawContours(crtImg, [contour], -1, (0, 0, 255, 255), 2)
+            cv2.fillPoly(filledImg, [contour], (0, 0, 255))
+        cv2.imshow('crtImg', crtImg)
+        cv2.imshow('filledImg', filledImg)
+        cv2.imwrite(str(Path.joinpath(self._pathToSave, 'crt{}.png'.format(self._imgNbr))), crtImg)
+        cv2.imwrite(str(Path.joinpath(self._pathToSave, 'filled{}.png'.format(self._imgNbr))), filledImg)
+
+    def LoadTemplateImg(self, number):
+        templates = {}
+        templates['crt'] = cv2.imread(str(Path.joinpath(self._pathToSave, 'crt{}.png'.format(number))))
+        templates['filled'] = cv2.imread(str(Path.joinpath(self._pathToSave, 'filled{}.png'.format(number))))
+        self._templateImgs[str(number)] = templates
+
+    def CompareInOutValues(self, templateNbr, processedImg):
+        templateImg = self._templateImgs[str(templateNbr)]['filled']
+        for contour in self._lastContours:
+            cv2.fillPoly(processedImg, [contour], (0, 0, 255))
+        h = templateImg.shape[0]
+        w = templateImg.shape[1]
+        totalP = w * h
+        templateP = 0
+        inP = 0
+        outP = 0
+        for y in range(0, h):
+            for x in range(0, w):
+                if np.all(templateImg[y, x] == (0, 0, 255)):
+                    templateP += 1
+                    if np.all(processedImg[y, x] == (0, 0, 255)):
+                        inP += 1
+                elif np.all(processedImg[y, x] == (0, 0, 255)):
+                    outP += 1
+        print('template : {}\nin : {}\nout : {}\ntotal : {}'.format(templateP, inP, outP, totalP))
+        self._templateFilledIn = float(inP)
+        self._templateFilledOut = float(outP)
+        self._totalPixel = float(totalP)
+        self._templatePixel = float(templateP)
+
     def RunDetection(self):
         self._capture = cv2.VideoCapture(0)
         while True:
             ret, frame = self._capture.read()
+
+            if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
+                imgWithTp = cv2.addWeighted(frame, 1, self._templateImgs['0']['crt'], 1, 0)
+                value = 0.0
+                if self._templatePixel > 0:
+                    value = self._templateFilledIn / self._templatePixel * 100.0
+                cv2.putText(imgWithTp, 'Filled In : {:.2f}%'.format(value), (0, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                value = 0.0
+                if self._templateFilledOut + self._templateFilledIn > 0:
+                    value = self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0
+                #if self._totalPixel - self._templatePixel > 0:
+                #    value = self._templateFilledOut / (self._totalPixel - self._templatePixel) * 100.0
+                cv2.putText(imgWithTp, 'Filled Out : {:.2f}%'.format(value), (0, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                cv2.imshow('WebcamTemplate', imgWithTp)
+
             processedImg = self.CheckFunction(frame)
-            finalImg = self.FindCountours(processedImg, frame)
+            finalImg = self.FindCountours(processedImg, frame.copy())
             cv2.imshow('Webcam', finalImg)
+
             key = cv2.waitKey(1)
             if key == 27:
                 break
+            elif key == 32:
+                self.SaveFrameAsTemplate((frame.shape[0], frame.shape[1]))
+            elif key == 13:
+                if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
+                    self.CompareInOutValues(0, frame.copy())
+
         self._capture.release()
         cv2.destroyAllWindows()
 
