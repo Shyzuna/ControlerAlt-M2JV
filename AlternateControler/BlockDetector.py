@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 
 class BlockDetector(object):
-    def __init__(self):
+    def __init__(self, comPipe):
         self._initParametersWindow()
+        self._comPipe = comPipe
         self._capture = None
         self._templateImgs = {}
         self._lastContours = None
@@ -80,6 +81,7 @@ class BlockDetector(object):
         self._templateImgs[str(number)] = templates
 
     def CompareInOutValues(self, templateNbr, processedImg):
+        #  Improve compute time → cython / dll or other algo
         templateImg = self._templateImgs[str(templateNbr)]['filled']
         for contour in self._lastContours:
             cv2.fillPoly(processedImg, [contour], (0, 0, 255))
@@ -102,11 +104,23 @@ class BlockDetector(object):
         self._templateFilledOut = float(outP)
         self._totalPixel = float(totalP)
         self._templatePixel = float(templateP)
+        #self._comPipe.put_nowait(self._templateFilledIn)
+        self._comPipe.send(inP)
 
     def RunDetection(self):
         self._capture = cv2.VideoCapture(0)
         while True:
             ret, frame = self._capture.read()
+
+            '''try:
+                pipeVal = self._comPipe.get_nowait()
+                print("{}:{}".format(os.getpid(), pipeVal))
+            except Exception as e:
+                pass'''
+
+            if self._comPipe.poll():
+                pipeVal = self._comPipe.recv()
+                print("Received {}:{}".format(os.getpid(), pipeVal))
 
             if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
                 imgWithTp = cv2.addWeighted(frame, 1, self._templateImgs['0']['crt'], 1, 0)
