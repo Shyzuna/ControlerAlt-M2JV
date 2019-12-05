@@ -7,6 +7,6 @@ if __name__ == '__main__':
     comQ = mp.Queue()
     comProcess = mp.Process(target=BlockCommunicator, args=(comPipe,))
     comProcess.start()
-    #bDetector = BlockDetector(opencvPipe)
-    #bDetector.RunDetection()
+    bDetector = BlockDetector(opencvPipe)
+    bDetector.RunDetection()
     comProcess.join(timeout=5)

@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import os
 from pathlib import Path
+from AlternateControler.NetworkMessageType import NetworkMessageType
 
 class BlockDetector(object):
     def __init__(self, comPipe):
@@ -10,12 +11,13 @@ class BlockDetector(object):
         self._capture = None
         self._templateImgs = {}
         self._lastContours = None
-        self._currentTemplate = 0
+        self._currentTemplate = -1
         self._imgNbr = 2  # Do smth in order to start at the right number
         path = Path()
         self._pathToSave = Path.joinpath(path.absolute(), 'data')
         self.LoadTemplateImg(0)
         self.LoadTemplateImg(1)
+        self.LoadTemplateImg(2)
         self._templateFilledIn = 0.0
         self._templateFilledOut = 0.0
         self._totalPixel = 0.0
@@ -29,7 +31,7 @@ class BlockDetector(object):
         cv2.createTrackbar('Threshold', 'Parameters', 0, 255, self._emptyCallBack)
         cv2.createTrackbar('FillContours', 'Parameters', 0, 1, self._emptyCallBack)
         cv2.createTrackbar('UseTemplate', 'Parameters', 0, 1, self._emptyCallBack)
-        #cv2.createTrackbar('Template', 'Parameters', 0, 10, self._emptyCallBack)
+        cv2.createTrackbar('Template', 'Parameters', 0, 10, self._emptyCallBack)
 
     def FindCountours(self, processedImg, base):
         # Find contours
@@ -58,8 +60,8 @@ class BlockDetector(object):
         cv2.imshow('grey&threshold', thresh)
         closed = thresh
         # Fill close pixel by rectangle kernel
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
-        closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        #kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        #closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
         # Improve borders
         closed = cv2.erode(closed, None, iterations=4)
         closed = cv2.dilate(closed, None, iterations=4)
@@ -105,12 +107,14 @@ class BlockDetector(object):
                 elif np.all(processedImg[y, x] == (0, 0, 255)):
                     outP += 1
         print('template : {}\nin : {}\nout : {}\ntotal : {}'.format(templateP, inP, outP, totalP))
+        print('-------------------')
         self._templateFilledIn = float(inP)
         self._templateFilledOut = float(outP)
         self._totalPixel = float(totalP)
         self._templatePixel = float(templateP)
         #self._comPipe.put_nowait(self._templateFilledIn)
-        self._comPipe.send(inP)
+        self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
+                            self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0))
 
     def RunDetection(self):
         self._capture = cv2.VideoCapture(0)
@@ -125,9 +129,17 @@ class BlockDetector(object):
 
             if self._comPipe.poll():
                 pipeVal = self._comPipe.recv()
-                print("Received {}:{}".format(os.getpid(), pipeVal))
+                print("Received from Com {}:{}".format(os.getpid(), pipeVal))
+                # Can only receive template value atm
+                if str(pipeVal) in self._templateImgs.keys():
+                    self._currentTemplate = pipeVal
+                    self._comPipe.send(NetworkMessageType.TEMPLATE_CHANGED.value[0])
+                else:
+                    self._comPipe.send(NetworkMessageType.TEMPLATE_UNKNOWN.value[0])
 
-            if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
+
+            #if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
+            if self._currentTemplate != -1:
                 #self._currentTemplate = cv2.getTrackbarPos('Template', 'Parameters')
                 #if str(self._currentTemplate) in self._templateImgs.keys():
                 imgWithTp = cv2.addWeighted(frame, 1, self._templateImgs[str(self._currentTemplate)]['crt'], 1, 0)
@@ -155,8 +167,9 @@ class BlockDetector(object):
             elif key == 32:
                 self.SaveFrameAsTemplate((frame.shape[0], frame.shape[1]))
             elif key == 13:
-                if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
-                    self.CompareInOutValues(0, frame.copy())
+                #if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
+                if self._currentTemplate != -1:
+                    self.CompareInOutValues(self._currentTemplate, frame.copy())
 
         self._capture.release()
         cv2.destroyAllWindows()
