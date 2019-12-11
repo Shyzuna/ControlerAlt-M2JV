@@ -1,23 +1,28 @@
 import cv2
 import numpy as np
 import os
+import re
 from pathlib import Path
 from AlternateControler.NetworkMessageType import NetworkMessageType
+import params.Params as Params
 
 class BlockDetector(object):
     def __init__(self, comPipe):
         self._initParametersWindow()
+        #self._initWebcamParametersWindow()
         self._comPipe = comPipe
         self._capture = None
-        self._templateImgs = {}
         self._lastContours = None
-        self._currentTemplate = -1
-        self._imgNbr = 2  # Do smth in order to start at the right number
+        self._lastRectangle = None
+        self._lastCenter = None
+
         path = Path()
-        self._pathToSave = Path.joinpath(path.absolute(), 'data')
-        self.LoadTemplateImg(0)
-        self.LoadTemplateImg(1)
-        self.LoadTemplateImg(2)
+        self._templatePath = Path.joinpath(path.absolute(), Params.TEMPLATE_FOLDER)
+        self._templateImgs = {}
+        self._currentTemplate = -1
+        self._nextTemplateNbr = None
+        self.LoadAllTemplates()
+
         self._templateFilledIn = 0.0
         self._templateFilledOut = 0.0
         self._totalPixel = 0.0
@@ -26,12 +31,33 @@ class BlockDetector(object):
     def _emptyCallBack(self, arg):
         pass
 
+    def _cameraConfChanged(self, arg):
+        if self._capture is not None:
+            fps = 60 if cv2.getTrackbarPos('FrameRate', 'WebcamParam') == 0 else 50
+            #self._capture.set(5, fps)
+            self._capture.set(10, float(cv2.getTrackbarPos('Brightness', 'WebcamParam')) / 100.0)
+            self._capture.set(11, float(cv2.getTrackbarPos('Contrast', 'WebcamParam')) / 100.0)
+            self._capture.set(12, float(cv2.getTrackbarPos('Saturation', 'WebcamParam')) / 100.0)
+            self._capture.set(14, float(cv2.getTrackbarPos('Gain', 'WebcamParam')) / 100.0)
+            self._capture.set(15, float(cv2.getTrackbarPos('Exposition', 'WebcamParam')) / 100.0)
+
+
     def _initParametersWindow(self):
         cv2.namedWindow('Parameters')
         cv2.createTrackbar('Threshold', 'Parameters', 0, 255, self._emptyCallBack)
         cv2.createTrackbar('FillContours', 'Parameters', 0, 1, self._emptyCallBack)
         cv2.createTrackbar('UseTemplate', 'Parameters', 0, 1, self._emptyCallBack)
         cv2.createTrackbar('Template', 'Parameters', 0, 10, self._emptyCallBack)
+
+    def _initWebcamParametersWindow(self):
+        cv2.namedWindow('WebcamParam')
+        cv2.createTrackbar('Brightness', 'WebcamParam', 0, 100, self._cameraConfChanged)
+        cv2.createTrackbar('Contrast', 'WebcamParam', 0, 100, self._cameraConfChanged)
+        cv2.createTrackbar('Saturation', 'WebcamParam', 0, 100, self._cameraConfChanged)
+        cv2.createTrackbar('Gain', 'WebcamParam', 0, 100, self._cameraConfChanged)
+        cv2.createTrackbar('Exposition', 'WebcamParam', 0, 100, self._cameraConfChanged)
+        cv2.createTrackbar('FrameRate', 'WebcamParam', 0, 1, self._cameraConfChanged)
+
 
     def FindCountours(self, processedImg, base):
         # Find contours
@@ -41,6 +67,11 @@ class BlockDetector(object):
                 cv2.fillPoly(base, [contour], (255, 0, 0))
             else:
                 cv2.drawContours(base, [contour], -1, (255, 0, 0), 2)
+            x, y, w, h = cv2.boundingRect(contour)
+            self._lastRectangle = (x, y, w, h)
+            self._lastCenter = (int((x + x + w) / 2), int((y + y + h) / 2))
+            cv2.rectangle(base, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.circle(base, self._lastCenter, 2, (0, 255, 0), -1)
         return base
 
     def CheckFunction(self, frame):
@@ -76,16 +107,70 @@ class BlockDetector(object):
             cv2.fillPoly(filledImg, [contour], (0, 0, 255))
         cv2.imshow('crtImg', crtImg)
         cv2.imshow('filledImg', filledImg)
-        cv2.imwrite(str(Path.joinpath(self._pathToSave, 'crt{}.png'.format(self._imgNbr))), crtImg)
-        cv2.imwrite(str(Path.joinpath(self._pathToSave, 'filled{}.png'.format(self._imgNbr))), filledImg)
-        self.LoadTemplateImg(self._imgNbr)
-        self._imgNbr += 1
+        cv2.imwrite(str(Path.joinpath(self._templatePath, 'crt{}.png'.format(self._nextTemplateNbr))), crtImg)
+        cv2.imwrite(str(Path.joinpath(self._templatePath, 'filled{}.png'.format(self._nextTemplateNbr))), filledImg)
 
-    def LoadTemplateImg(self, number):
-        templates = {}
-        templates['crt'] = cv2.imread(str(Path.joinpath(self._pathToSave, 'crt{}.png'.format(number))))
-        templates['filled'] = cv2.imread(str(Path.joinpath(self._pathToSave, 'filled{}.png'.format(number))))
-        self._templateImgs[str(number)] = templates
+        self._templateImgs[str(self._nextTemplateNbr)] = {}
+        self._templateImgs[str(self._nextTemplateNbr)]['crt'] = cv2.imread(str(Path.joinpath(self._templatePath, 'crt{}.png'.format(self._nextTemplateNbr))))
+        self._templateImgs[str(self._nextTemplateNbr)]['filled'] = cv2.imread(str(Path.joinpath(self._templatePath, 'filled{}.png'.format(self._nextTemplateNbr))))
+        print('New template Saved and Added to {}'.format(self._nextTemplateNbr))
+        self._nextTemplateNbr += 1
+
+
+    def LoadAllTemplates(self):
+        last = -1
+        regex = r'(filled|crt)(\d+)\.png'
+        tmpImg = {}
+        for filename in os.listdir(self._templatePath):
+            match = re.search(regex, filename)
+            if match:
+                name = match.group(1)
+                number = match.group(2)
+                if number not in tmpImg.keys():
+                    tmpImg[number] = {}
+                tmpImg[number][name] = cv2.imread(str(Path.joinpath(self._templatePath, filename)))
+                if last < int(number):
+                    last = int(number)
+
+        self._templateImgs = {}
+        for nbr in tmpImg.keys():
+            current = tmpImg[nbr]
+            if 'crt' in current.keys() and 'filled' in current.keys():
+                self._templateImgs[nbr] = current
+                # Template should have only one contour
+                cnt, h = cv2.findContours(cv2.cvtColor(current['filled'], cv2.COLOR_BGR2GRAY), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                x, y, w, h = cv2.boundingRect(cnt[0])
+                self._templateImgs[nbr]['boundingBox'] = (x, y, w, h)
+                self._templateImgs[nbr]['boxCenter'] = (int((x + x + w) / 2), int((y + y + h) / 2))
+
+                """tmp = current['filled'].copy()
+                cv2.rectangle(tmp, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.circle(tmp, self._templateImgs[nbr]['boxCenter'], 2, (0, 255, 0), -1)
+                cv2.imshow(nbr, tmp)"""
+            else:
+                print('Missing crt or filled for template {} : Removing'.format(nbr))
+
+        self._nextTemplateNbr = last + 1
+        print('Templates loaded ({})'.format(len(self._templateImgs)))
+
+    def DisplayTemplate(self, base):
+        crtTemplate = self._templateImgs[str(self._currentTemplate)]['crt']
+        x, y, w, h = self._templateImgs[str(self._currentTemplate)]['boundingBox']
+        cx, cy = self._templateImgs[str(self._currentTemplate)]['boxCenter']
+        croppedTemplate = crtTemplate[y:y+h, x:x+w]
+        offset = (self._lastCenter[0] - cy, self._lastCenter[1] - cx)
+        print(self._lastCenter)
+        print(self._templateImgs[str(self._currentTemplate)]['boxCenter'])
+        print(offset)
+        print('------------')
+        # it bugs here !
+        templatedImg = base.copy()
+        maxY = offset[0] + croppedTemplate.shape[0] if (offset[0] + croppedTemplate.shape[0]) < base.shape[0] else base.shape[0]
+        maxX = offset[1] + croppedTemplate.shape[1] if (offset[1] + croppedTemplate.shape[1]) < base.shape[1] else base.shape[1]
+        templatedImg[offset[0]:maxY, offset[1]:maxX] = croppedTemplate
+        return templatedImg
+
+
 
     def CompareInOutValues(self, templateNbr, processedImg):
         #  Improve compute time → cython / dll or other algo
@@ -112,7 +197,6 @@ class BlockDetector(object):
         self._templateFilledOut = float(outP)
         self._totalPixel = float(totalP)
         self._templatePixel = float(templateP)
-        #self._comPipe.put_nowait(self._templateFilledIn)
         self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
                             self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0))
 
@@ -137,12 +221,12 @@ class BlockDetector(object):
                 else:
                     self._comPipe.send(NetworkMessageType.TEMPLATE_UNKNOWN.value[0])
 
-
             #if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
             if self._currentTemplate != -1:
                 #self._currentTemplate = cv2.getTrackbarPos('Template', 'Parameters')
                 #if str(self._currentTemplate) in self._templateImgs.keys():
-                imgWithTp = cv2.addWeighted(frame, 1, self._templateImgs[str(self._currentTemplate)]['crt'], 1, 0)
+                #imgWithTp = cv2.addWeighted(frame, 0.8, self._templateImgs[str(self._currentTemplate)]['crt'], 1, 0)
+                imgWithTp = self.DisplayTemplate(frame)
                 value = 0.0
                 if self._templatePixel > 0:
                     value = self._templateFilledIn / self._templatePixel * 100.0
