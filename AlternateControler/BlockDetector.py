@@ -128,7 +128,7 @@ class BlockDetector(object):
                 number = match.group(2)
                 if number not in tmpImg.keys():
                     tmpImg[number] = {}
-                tmpImg[number][name] = cv2.imread(str(Path.joinpath(self._templatePath, filename)))
+                tmpImg[number][name] = cv2.imread(str(Path.joinpath(self._templatePath, filename)), cv2.IMREAD_UNCHANGED)
                 if last < int(number):
                     last = int(number)
 
@@ -167,7 +167,10 @@ class BlockDetector(object):
         templatedImg = base.copy()
         maxY = offset[0] + croppedTemplate.shape[0] if (offset[0] + croppedTemplate.shape[0]) < base.shape[0] else base.shape[0]
         maxX = offset[1] + croppedTemplate.shape[1] if (offset[1] + croppedTemplate.shape[1]) < base.shape[1] else base.shape[1]
-        templatedImg[offset[0]:maxY, offset[1]:maxX] = croppedTemplate
+        alphaTemplate = croppedTemplate[:, :, 3] / 255.0
+        inversedAlpha = 1 - alphaTemplate
+        for c in range (0, 3):
+            templatedImg[offset[0]:maxY, offset[1]:maxX, c] = (alphaTemplate * croppedTemplate[:, :, c] + inversedAlpha * templatedImg[offset[0]:maxY, offset[1]:maxX, c])
         return templatedImg
 
 
