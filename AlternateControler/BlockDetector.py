@@ -116,7 +116,6 @@ class BlockDetector(object):
         print('New template Saved and Added to {}'.format(self._nextTemplateNbr))
         self._nextTemplateNbr += 1
 
-
     def LoadAllTemplates(self):
         last = -1
         regex = r'(filled|crt)(\d+)\.png'
@@ -158,19 +157,42 @@ class BlockDetector(object):
         x, y, w, h = self._templateImgs[str(self._currentTemplate)]['boundingBox']
         cx, cy = self._templateImgs[str(self._currentTemplate)]['boxCenter']
         croppedTemplate = crtTemplate[y:y+h, x:x+w]
-        offset = (self._lastCenter[0] - cy, self._lastCenter[1] - cx)
+        baseOffset = (self._lastCenter[0] - cx, self._lastCenter[1] - cy)
+        offset = (self._lastCenter[0] - cx + x, self._lastCenter[1] - cy + y)  # x ; y
+
+        # it bugs here !
+        templatedImg = base.copy()
+        maxY = offset[1] + croppedTemplate.shape[0] if (offset[1] + croppedTemplate.shape[0]) < base.shape[0] else base.shape[0]
+        maxX = offset[0] + croppedTemplate.shape[1] if (offset[0] + croppedTemplate.shape[1]) < base.shape[1] else base.shape[1]
+
+        toRemoveW = (base.shape[1] - (offset[0] + croppedTemplate.shape[1])) if (base.shape[1] - (offset[0] + croppedTemplate.shape[1])) < 0 else 0
+        toRemoveH = (base.shape[0] - (offset[1] + croppedTemplate.shape[0])) if (base.shape[0] - (offset[1] + croppedTemplate.shape[0])) < 0 else 0
+
+        maxW = croppedTemplate.shape[1] + toRemoveW
+        maxH = croppedTemplate.shape[0] + toRemoveH
+
         print(self._lastCenter)
         print(self._templateImgs[str(self._currentTemplate)]['boxCenter'])
         print(offset)
+        print(croppedTemplate.shape)
+        print(maxX)
+        print(maxY)
+        print(maxH)
+        print(maxW)
         print('------------')
-        # it bugs here !
-        templatedImg = base.copy()
-        maxY = offset[0] + croppedTemplate.shape[0] if (offset[0] + croppedTemplate.shape[0]) < base.shape[0] else base.shape[0]
-        maxX = offset[1] + croppedTemplate.shape[1] if (offset[1] + croppedTemplate.shape[1]) < base.shape[1] else base.shape[1]
-        alphaTemplate = croppedTemplate[:, :, 3] / 255.0
+
+        alphaTemplate = croppedTemplate[0:maxH, 0:maxW, 3] / 255.0
         inversedAlpha = 1 - alphaTemplate
-        for c in range (0, 3):
-            templatedImg[offset[0]:maxY, offset[1]:maxX, c] = (alphaTemplate * croppedTemplate[:, :, c] + inversedAlpha * templatedImg[offset[0]:maxY, offset[1]:maxX, c])
+        for c in range(0, 3):
+            templatedImg[offset[1]:maxY, offset[0]:maxX, c] = (alphaTemplate * croppedTemplate[0:maxH, 0:maxW, c] + inversedAlpha * templatedImg[offset[1]:maxY, offset[0]:maxX, c])
+
+        # Draw both bounding and center : DEBUG
+        x2, y2, w2, h2 = self._lastRectangle
+        cv2.rectangle(templatedImg, (x2, y2), (x2 + w2, y2 + h2), (0, 255, 0), 2)
+        cv2.circle(templatedImg, self._lastCenter, 2, (0, 255, 0), -1)
+        cv2.rectangle(templatedImg, (x + baseOffset[0], y + baseOffset[1]), (x + w + baseOffset[0], y + h + baseOffset[1]), (255, 0, 0), 2)
+        cv2.circle(templatedImg, (cx + baseOffset[0], cy + baseOffset[1]), 2, (255, 0, 0), -1)
+
         return templatedImg
 
 
@@ -224,26 +246,6 @@ class BlockDetector(object):
                 else:
                     self._comPipe.send(NetworkMessageType.TEMPLATE_UNKNOWN.value[0])
 
-            #if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
-            if self._currentTemplate != -1:
-                #self._currentTemplate = cv2.getTrackbarPos('Template', 'Parameters')
-                #if str(self._currentTemplate) in self._templateImgs.keys():
-                #imgWithTp = cv2.addWeighted(frame, 0.8, self._templateImgs[str(self._currentTemplate)]['crt'], 1, 0)
-                imgWithTp = self.DisplayTemplate(frame)
-                value = 0.0
-                if self._templatePixel > 0:
-                    value = self._templateFilledIn / self._templatePixel * 100.0
-                cv2.putText(imgWithTp, 'Filled In : {:.2f}%'.format(value), (0, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                value = 0.0
-                if self._templateFilledOut + self._templateFilledIn > 0:
-                    value = self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0
-                #if self._totalPixel - self._templatePixel > 0:
-                #    value = self._templateFilledOut / (self._totalPixel - self._templatePixel) * 100.0
-                cv2.putText(imgWithTp, 'Filled Out : {:.2f}%'.format(value), (0, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                cv2.imshow('WebcamTemplate', imgWithTp)
-
             processedImg = self.CheckFunction(frame)
             finalImg = self.FindCountours(processedImg, frame.copy())
             cv2.imshow('Webcam', finalImg)
@@ -257,6 +259,27 @@ class BlockDetector(object):
                 #if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
                 if self._currentTemplate != -1:
                     self.CompareInOutValues(self._currentTemplate, frame.copy())
+            elif key == 8:  # no mvt
+                # if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
+                if self._currentTemplate != -1:
+                    # self._currentTemplate = cv2.getTrackbarPos('Template', 'Parameters')
+                    # if str(self._currentTemplate) in self._templateImgs.keys():
+                    # imgWithTp = cv2.addWeighted(frame, 0.8, self._templateImgs[str(self._currentTemplate)]['crt'], 1, 0)
+                    imgWithTp = self.DisplayTemplate(frame)
+                    value = 0.0
+                    if self._templatePixel > 0:
+                        value = self._templateFilledIn / self._templatePixel * 100.0
+                    cv2.putText(imgWithTp, 'Filled In : {:.2f}%'.format(value), (0, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    value = 0.0
+                    if self._templateFilledOut + self._templateFilledIn > 0:
+                        value = self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0
+                    # if self._totalPixel - self._templatePixel > 0:
+                    #    value = self._templateFilledOut / (self._totalPixel - self._templatePixel) * 100.0
+                    cv2.putText(imgWithTp, 'Filled Out : {:.2f}%'.format(value), (0, 60),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    cv2.imshow('WebcamTemplate', imgWithTp)
+
 
         self._capture.release()
         cv2.destroyAllWindows()
