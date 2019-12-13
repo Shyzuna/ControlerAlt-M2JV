@@ -160,16 +160,20 @@ class BlockDetector(object):
         baseOffset = (self._lastCenter[0] - cx, self._lastCenter[1] - cy)
         offset = (self._lastCenter[0] - cx + x, self._lastCenter[1] - cy + y)  # x ; y
 
-        # it bugs here !
+        # it works now but should rename a bit
         templatedImg = base.copy()
         maxY = offset[1] + croppedTemplate.shape[0] if (offset[1] + croppedTemplate.shape[0]) < base.shape[0] else base.shape[0]
         maxX = offset[0] + croppedTemplate.shape[1] if (offset[0] + croppedTemplate.shape[1]) < base.shape[1] else base.shape[1]
+        minY = offset[1] if offset[1] > 0 else 0
+        minX = offset[0] if offset[0] > 0 else 0
 
         toRemoveW = (base.shape[1] - (offset[0] + croppedTemplate.shape[1])) if (base.shape[1] - (offset[0] + croppedTemplate.shape[1])) < 0 else 0
         toRemoveH = (base.shape[0] - (offset[1] + croppedTemplate.shape[0])) if (base.shape[0] - (offset[1] + croppedTemplate.shape[0])) < 0 else 0
 
         maxW = croppedTemplate.shape[1] + toRemoveW
         maxH = croppedTemplate.shape[0] + toRemoveH
+        startW = -offset[0] if offset[0] < 0 else 0
+        startH = -offset[1] if offset[1] < 0 else 0
 
         print(self._lastCenter)
         print(self._templateImgs[str(self._currentTemplate)]['boxCenter'])
@@ -177,14 +181,16 @@ class BlockDetector(object):
         print(croppedTemplate.shape)
         print(maxX)
         print(maxY)
+        print(minX)
+        print(minY)
         print(maxH)
         print(maxW)
         print('------------')
 
-        alphaTemplate = croppedTemplate[0:maxH, 0:maxW, 3] / 255.0
+        alphaTemplate = croppedTemplate[startH:maxH, startW:maxW, 3] / 255.0
         inversedAlpha = 1 - alphaTemplate
         for c in range(0, 3):
-            templatedImg[offset[1]:maxY, offset[0]:maxX, c] = (alphaTemplate * croppedTemplate[0:maxH, 0:maxW, c] + inversedAlpha * templatedImg[offset[1]:maxY, offset[0]:maxX, c])
+            templatedImg[minY:maxY, minX:maxX, c] = (alphaTemplate * croppedTemplate[startH:maxH, startW:maxW, c] + inversedAlpha * templatedImg[minY:maxY, minX:maxX, c])
 
         # Draw both bounding and center : DEBUG
         x2, y2, w2, h2 = self._lastRectangle
