@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import os
+import time
 import re
 from pathlib import Path
 from AlternateControler.NetworkMessageType import NetworkMessageType
@@ -15,6 +16,7 @@ class BlockDetector(object):
         self._lastContours = None
         self._lastRectangle = None
         self._lastCenter = None
+        self._imgWithTemplate = None
 
         path = Path()
         self._templatePath = Path.joinpath(path.absolute(), Params.TEMPLATE_FOLDER)
@@ -201,6 +203,54 @@ class BlockDetector(object):
 
         return templatedImg
 
+    def CompareInOutValues2(self, templateNbr, processedImg):
+        templateImg = self._templateImgs[str(templateNbr)]['filled']
+        x, y, w, h = self._templateImgs[str(templateNbr)]['boundingBox']
+        maxW = w
+        maxH = h
+        croppedTemplate = templateImg[y:y+h, x:x+w]
+
+        for contour in self._lastContours:
+            cv2.fillPoly(processedImg, [contour], (0, 0, 255))
+        x, y, w, h = self._lastRectangle
+        if w > maxW:
+            maxW = w
+        if h > maxH:
+            maxH = h
+        croppedBase = processedImg[y:y+h, x:x+w]
+
+        emptyImg = np.zeros(shape=[maxH, maxW, 3])
+        # base
+        baseX, baseY = (maxW - croppedBase.shape[1])//2, (maxH - croppedBase.shape[0])//2
+        baseResized = emptyImg.copy()
+        baseResized[baseY:(baseY+croppedBase.shape[0]), baseX:(baseX+croppedBase.shape[1])] = croppedBase
+        # template
+        templateX, templateY = (maxW - croppedTemplate.shape[1])//2, (maxH - croppedTemplate.shape[0])//2
+        templateResized = emptyImg.copy()
+        templateResized[templateY:(templateY+croppedTemplate.shape[0]), templateX:(templateX+croppedTemplate.shape[1])] = croppedTemplate
+
+        cv2.imshow('baseCropped', baseResized)
+        cv2.imshow('templateCropped', templateResized)
+
+        templateP = 0
+        inP = 0
+        outP = 0
+        for y in range(0, maxH):
+            for x in range(0, maxW):
+                if np.all(templateResized[y, x] == (0, 0, 255)):
+                    templateP += 1
+                    if np.all(baseResized[y, x] == (0, 0, 255)):
+                        inP += 1
+                elif np.all(baseResized[y, x] == (0, 0, 255)):
+                    outP += 1
+        print('template : {}\nin : {}\nout : {}\n'.format(templateP, inP, outP))
+        print('-------------------')
+        self._templateFilledIn = float(inP)
+        self._templateFilledOut = float(outP)
+        self._templatePixel = float(templateP)
+        self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
+                                          self._templateFilledOut / (
+                                                      self._templateFilledOut + self._templateFilledIn) * 100.0))
 
 
     def CompareInOutValues(self, templateNbr, processedImg):
@@ -230,6 +280,21 @@ class BlockDetector(object):
         self._templatePixel = float(templateP)
         self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
                             self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0))
+
+    def DisplayTextFilledPercent(self, imgWithTp):
+        value = 0.0
+        if self._templatePixel > 0:
+            value = self._templateFilledIn / self._templatePixel * 100.0
+        cv2.putText(imgWithTp, 'Filled In : {:.2f}%'.format(value), (0, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        value = 0.0
+        if self._templateFilledOut + self._templateFilledIn > 0:
+            value = self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0
+        # if self._totalPixel - self._templatePixel > 0:
+        #    value = self._templateFilledOut / (self._totalPixel - self._templatePixel) * 100.0
+        cv2.putText(imgWithTp, 'Filled Out : {:.2f}%'.format(value), (0, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        return imgWithTp
 
     def RunDetection(self):
         self._capture = cv2.VideoCapture(0)
@@ -264,28 +329,22 @@ class BlockDetector(object):
             elif key == 13:
                 #if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
                 if self._currentTemplate != -1:
-                    self.CompareInOutValues(self._currentTemplate, frame.copy())
+                    currentTime = time.time()
+                    self.CompareInOutValues2(self._currentTemplate, frame.copy())
+                    if self._imgWithTemplate is None:
+                        self._imgWithTemplate = self.DisplayTemplate(frame)
+                    imgWithTp = self.DisplayTextFilledPercent(self._imgWithTemplate.copy())
+                    cv2.imshow('WebcamTemplate', imgWithTp)
+                    print('Time elipsed : {}s'.format(time.time() - currentTime))
             elif key == 8:  # no mvt
                 # if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
                 if self._currentTemplate != -1:
                     # self._currentTemplate = cv2.getTrackbarPos('Template', 'Parameters')
                     # if str(self._currentTemplate) in self._templateImgs.keys():
                     # imgWithTp = cv2.addWeighted(frame, 0.8, self._templateImgs[str(self._currentTemplate)]['crt'], 1, 0)
-                    imgWithTp = self.DisplayTemplate(frame)
-                    value = 0.0
-                    if self._templatePixel > 0:
-                        value = self._templateFilledIn / self._templatePixel * 100.0
-                    cv2.putText(imgWithTp, 'Filled In : {:.2f}%'.format(value), (0, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    value = 0.0
-                    if self._templateFilledOut + self._templateFilledIn > 0:
-                        value = self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0
-                    # if self._totalPixel - self._templatePixel > 0:
-                    #    value = self._templateFilledOut / (self._totalPixel - self._templatePixel) * 100.0
-                    cv2.putText(imgWithTp, 'Filled Out : {:.2f}%'.format(value), (0, 60),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    self._imgWithTemplate = self.DisplayTemplate(frame)
+                    imgWithTp = self.DisplayTextFilledPercent(self._imgWithTemplate.copy())
                     cv2.imshow('WebcamTemplate', imgWithTp)
-
 
         self._capture.release()
         cv2.destroyAllWindows()
