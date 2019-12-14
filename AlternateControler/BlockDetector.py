@@ -2,7 +2,9 @@ import cv2
 import numpy as np
 import os
 import time
+import base64
 import re
+import json
 from pathlib import Path
 from AlternateControler.NetworkMessageType import NetworkMessageType
 import params.Params as Params
@@ -248,9 +250,18 @@ class BlockDetector(object):
         self._templateFilledIn = float(inP)
         self._templateFilledOut = float(outP)
         self._templatePixel = float(templateP)
-        self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
+
+        retval, buffer = cv2.imencode('.png', croppedBase)
+
+        toSend = {
+            'filledIn': self._templateFilledIn / self._templatePixel * 100.0,
+            'filledOut': self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0,
+            'croppedBase': base64.b64encode(buffer).decode('utf-8')
+        }
+        self._comPipe.send(json.dumps(toSend))
+        """self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
                                           self._templateFilledOut / (
-                                                      self._templateFilledOut + self._templateFilledIn) * 100.0))
+                                                      self._templateFilledOut + self._templateFilledIn) * 100.0))"""
 
 
     def CompareInOutValues(self, templateNbr, processedImg):

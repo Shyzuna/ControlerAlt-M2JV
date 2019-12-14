@@ -7,7 +7,8 @@ from AlternateControler.NetworkMessageType import NetworkMessageType
 import time
 
 def TcpSocketCom(comPipe):
-    inOut = "0,0"
+    bDetectVal = None
+    newVal = False
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.bind((Params.HOST, Params.PORT))
@@ -21,6 +22,8 @@ def TcpSocketCom(comPipe):
                     if comPipe.poll():
                         pipeVal = comPipe.recv()
                         inOut = pipeVal
+                        bDetectVal = pipeVal
+                        newVal = True
                         print("Received from opencv {}:{}".format(os.getpid(), pipeVal))
 
                     data = conn.recv(1024)
@@ -31,7 +34,11 @@ def TcpSocketCom(comPipe):
                     reqCode, arg = ParseReceivedMsg(strData)
                     if reqCode == NetworkMessageType.ASK_SHAPE_INOUT.value[0]:  # why [0] ??
                         print("Ask In Out")
-                        response = inOut
+                        if newVal:
+                            response = bDetectVal
+                            newVal = False
+                        else:
+                            response = 'Empty'
                     elif reqCode == NetworkMessageType.CHANGE_TEMPLATE.value[0]:  # why [0] ??
                         print("Ask Change template to {}".format(arg))
                         comPipe.send(arg)
@@ -48,11 +55,13 @@ def TcpSocketCom(comPipe):
                             if time.time() - baseTime > 5:
                                 print('Template change timed out.')
                                 response = str(NetworkMessageType.ERROR_TEMPLATE_CHANGE.value[0])
+                                break
                     else:  # Most likely impossible
                         print('Unknown request code {}'.format(reqCode))
                         response = 'BUG'
 
                     conn.send(response.encode())
+            print('Client disconnected')
 
 def ParseReceivedMsg(msg):
     regex = r'^\[(\d+)\]-(\d*)$'
