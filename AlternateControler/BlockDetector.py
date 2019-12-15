@@ -15,6 +15,7 @@ from AlternateControler.AlignPos import AlignPos
 ## [OK] ALIGN TEMPLATE TO A CORNER OR BOTTOM INSTEAD OF CENTER ? => Check doesn't break cropping
 ## SAVE TEMPLATE FILLED WITH TRANSPARENCY
 ## RESIZE TEMPLATE TO FILL IMG SIZE ?
+## CAM REZ TO CHANGE ?
 ## WTF MAGIC NUMBER 1.6 .... =O ?!
 """
 
@@ -36,6 +37,7 @@ class BlockDetector(object):
         self._ratio = 4.0 / 3.0
         self._camHeight = 480
         self._camWidth = self._camHeight * self._ratio
+        self._totalPixel = self._camHeight * self._camWidth
 
         path = Path()
         self._templatePath = Path.joinpath(path.absolute(), Params.TEMPLATE_FOLDER)
@@ -46,8 +48,14 @@ class BlockDetector(object):
 
         self._templateFilledIn = 0.0
         self._templateFilledOut = 0.0
-        self._totalPixel = 0.0
         self._templatePixel = 0.0
+
+        self._waitPattern = cv2.imread(str(Path.joinpath(self._templatePath, 'waitPattern.jpg')))
+        self._whiteWaitPercent = 60.0
+        self._isWaiting = False
+        self._countdown = 0
+        self._baseCountdown = 3.0  # 3 seconds
+        self._checkIsDone = True
 
     def _emptyCallBack(self, arg):
         pass
@@ -61,7 +69,6 @@ class BlockDetector(object):
             self._capture.set(12, float(cv2.getTrackbarPos('Saturation', 'WebcamParam')) / 100.0)
             self._capture.set(14, float(cv2.getTrackbarPos('Gain', 'WebcamParam')) / 100.0)
             self._capture.set(15, float(cv2.getTrackbarPos('Exposition', 'WebcamParam')) / 100.0)
-
 
     def _initParametersWindow(self):
         cv2.namedWindow('Parameters')
@@ -78,7 +85,6 @@ class BlockDetector(object):
         cv2.createTrackbar('Gain', 'WebcamParam', 0, 100, self._cameraConfChanged)
         cv2.createTrackbar('Exposition', 'WebcamParam', 0, 100, self._cameraConfChanged)
         cv2.createTrackbar('FrameRate', 'WebcamParam', 0, 1, self._cameraConfChanged)
-
 
     def FindCountours(self, processedImg, base):
         # Find contours
@@ -104,7 +110,7 @@ class BlockDetector(object):
         grey = cv2.fastNlMeansDenoising(grey, None, 5, 7, 21)
         grey = cv2.GaussianBlur(grey, (5, 5), 0)
         # grey = cv2.Canny(grey, 35, 125)
-        cv2.imshow('grey', grey)
+        #cv2.imshow('grey', grey)
 
         # Threshold
         tValue = cv2.getTrackbarPos('Threshold', 'Parameters')
@@ -117,7 +123,7 @@ class BlockDetector(object):
         # Improve borders
         closed = cv2.erode(closed, None, iterations=4)
         closed = cv2.dilate(closed, None, iterations=4)
-        cv2.imshow('closed', closed)
+        #cv2.imshow('closed', closed)
         return closed
 
     def SaveFrameAsTemplate(self, size):
@@ -245,14 +251,15 @@ class BlockDetector(object):
         maxH = h
         croppedTemplate = templateImg[y:y+h, x:x+w]
 
+        base = np.zeros(shape=processedImg.shape)
         for contour in self._lastContours:
-            cv2.fillPoly(processedImg, [contour], (0, 0, 255))
+            cv2.fillPoly(base, [contour], (0, 0, 255))
         x, y, w, h = self._lastRectangle
         if w > maxW:
             maxW = w
         if h > maxH:
             maxH = h
-        croppedBase = processedImg[y:y+h, x:x+w]
+        croppedBase = base[y:y+h, x:x+w]
 
         emptyImg = np.zeros(shape=[maxH, maxW, 3])
 
@@ -339,6 +346,37 @@ class BlockDetector(object):
         self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
                             self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0))
 
+    def TryDetetectWait(self, base):
+        h = self._waitPattern.shape[0]
+        w = self._waitPattern.shape[1]
+        res = cv2.matchTemplate(base, self._waitPattern, cv2.TM_CCOEFF_NORMED)
+        minVal, maxVal, minLoc, maxLoc = cv2.minMaxLoc(res)
+        topLeft = maxLoc
+        bottomRight = (topLeft[0] + w, topLeft[1] + h)
+        cv2.rectangle(base, topLeft, bottomRight, 255, 2)
+        return base
+
+    def TryDetectWait2(self, base):
+        grey = cv2.cvtColor(base, cv2.COLOR_BGR2GRAY)
+        thresh = cv2.threshold(grey, 100, 255, cv2.THRESH_BINARY)[1]
+        contours, h = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        boundingSum = 0
+        for contour in contours:
+            cv2.drawContours(base, [contour], -1, (255, 0, 0), 2)
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.rectangle(base, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            boundingSum += w * h
+        percent = boundingSum / self._totalPixel * 100.0
+        if not self._isWaiting and percent > self._whiteWaitPercent:
+            self._isWaiting = True
+            self._checkIsDone = False
+            print('Now waiting')
+        elif self._isWaiting and percent < self._whiteWaitPercent:
+            print('Start countdown')
+            self._isWaiting = False
+            self._countdown = 0.0
+        cv2.imshow('DetectWait', base)
+
     def DisplayTextFilledPercent(self, imgWithTp):
         value = 0.0
         if self._templatePixel > 0:
@@ -363,7 +401,11 @@ class BlockDetector(object):
         height = self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         print('{}x{}'.format(width, height))
+
+        loopTime = time.time()
         while True:
+            deltaTime = time.time() - loopTime
+            loopTime = time.time()
             ret, frame = self._capture.read()
             cv2.imshow('base', frame)
             '''try:
@@ -381,6 +423,25 @@ class BlockDetector(object):
                     self._comPipe.send(NetworkMessageType.TEMPLATE_CHANGED.value[0])
                 else:
                     self._comPipe.send(NetworkMessageType.TEMPLATE_UNKNOWN.value[0])
+
+            #waitPattern = self.TryDetetectWait(frame.copy())
+            #cv2.imshow('waitPattern', waitPattern)
+            self.TryDetectWait2(frame.copy())
+
+            if not self._checkIsDone and not self._isWaiting:
+                if self._countdown > self._baseCountdown:
+                    print('Do Check in/out')
+                    self._checkIsDone = True
+                    if self._currentTemplate != -1:
+                        currentTime = time.time()
+                        self.CompareInOutValues2(self._currentTemplate, frame.copy())
+                        if self._imgWithTemplate is None:
+                            self._imgWithTemplate = self.DisplayTemplate(frame)
+                        imgWithTp = self.DisplayTextFilledPercent(self._imgWithTemplate.copy())
+                        cv2.imshow('WebcamTemplate', imgWithTp)
+                        print('Time elipsed : {}s'.format(time.time() - currentTime))
+                else:
+                    self._countdown += deltaTime
 
             processedImg = self.CheckFunction(frame)
             finalImg = self.FindCountours(processedImg, frame.copy())

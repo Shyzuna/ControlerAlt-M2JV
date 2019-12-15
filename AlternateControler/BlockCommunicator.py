@@ -29,11 +29,11 @@ def TcpSocketCom(comPipe):
                     data = conn.recv(1024)
                     if not data:
                         break
-                    print("Received from client : {}".format(data))
+                    #print("Received from client : {}".format(data))
                     strData = data.decode('utf-8')
                     reqCode, arg = ParseReceivedMsg(strData)
                     if reqCode == NetworkMessageType.ASK_SHAPE_INOUT.value[0]:  # why [0] ??
-                        print("Ask In Out")
+                        #print("Ask In Out")
                         if newVal:
                             response = bDetectVal
                             newVal = False
