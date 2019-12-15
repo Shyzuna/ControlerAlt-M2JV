@@ -8,6 +8,15 @@ import json
 from pathlib import Path
 from AlternateControler.NetworkMessageType import NetworkMessageType
 import params.Params as Params
+from AlternateControler.AlignPos import AlignPos
+
+"""
+## TODO
+## [OK] ALIGN TEMPLATE TO A CORNER OR BOTTOM INSTEAD OF CENTER ? => Check doesn't break cropping
+## SAVE TEMPLATE FILLED WITH TRANSPARENCY
+## RESIZE TEMPLATE TO FILL IMG SIZE ?
+## WTF MAGIC NUMBER 1.6 .... =O ?!
+"""
 
 class BlockDetector(object):
     def __init__(self, comPipe):
@@ -19,6 +28,14 @@ class BlockDetector(object):
         self._lastRectangle = None
         self._lastCenter = None
         self._imgWithTemplate = None
+        self._currentAlign = AlignPos.BOTTOM_CENTER
+
+        self._magicNumber = 1.6  # Find from where it comes !
+
+        self._ratio = 16.0 / 9.0
+        self._ratio = 4.0 / 3.0
+        self._camHeight = 480
+        self._camWidth = self._camHeight * self._ratio
 
         path = Path()
         self._templatePath = Path.joinpath(path.absolute(), Params.TEMPLATE_FOLDER)
@@ -95,8 +112,8 @@ class BlockDetector(object):
         cv2.imshow('grey&threshold', thresh)
         closed = thresh
         # Fill close pixel by rectangle kernel
-        #kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-        #closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
         # Improve borders
         closed = cv2.erode(closed, None, iterations=4)
         closed = cv2.dilate(closed, None, iterations=4)
@@ -115,8 +132,13 @@ class BlockDetector(object):
         cv2.imwrite(str(Path.joinpath(self._templatePath, 'filled{}.png'.format(self._nextTemplateNbr))), filledImg)
 
         self._templateImgs[str(self._nextTemplateNbr)] = {}
-        self._templateImgs[str(self._nextTemplateNbr)]['crt'] = cv2.imread(str(Path.joinpath(self._templatePath, 'crt{}.png'.format(self._nextTemplateNbr))))
-        self._templateImgs[str(self._nextTemplateNbr)]['filled'] = cv2.imread(str(Path.joinpath(self._templatePath, 'filled{}.png'.format(self._nextTemplateNbr))))
+        self._templateImgs[str(self._nextTemplateNbr)]['crt'] = cv2.imread(str(Path.joinpath(self._templatePath, 'crt{}.png'.format(self._nextTemplateNbr))), cv2.IMREAD_UNCHANGED)
+        self._templateImgs[str(self._nextTemplateNbr)]['filled'] = cv2.imread(str(Path.joinpath(self._templatePath, 'filled{}.png'.format(self._nextTemplateNbr))), cv2.IMREAD_UNCHANGED)
+        cnt, h = cv2.findContours(cv2.cvtColor(self._templateImgs[str(self._nextTemplateNbr)]['filled'], cv2.COLOR_BGR2GRAY), cv2.RETR_EXTERNAL,
+                                  cv2.CHAIN_APPROX_SIMPLE)
+        x, y, w, h = cv2.boundingRect(cnt[0])
+        self._templateImgs[str(self._nextTemplateNbr)]['boundingBox'] = (x, y, w, h)
+        self._templateImgs[str(self._nextTemplateNbr)]['boxCenter'] = (int((x + x + w) / 2), int((y + y + h) / 2))
         print('New template Saved and Added to {}'.format(self._nextTemplateNbr))
         self._nextTemplateNbr += 1
 
@@ -161,8 +183,19 @@ class BlockDetector(object):
         x, y, w, h = self._templateImgs[str(self._currentTemplate)]['boundingBox']
         cx, cy = self._templateImgs[str(self._currentTemplate)]['boxCenter']
         croppedTemplate = crtTemplate[y:y+h, x:x+w]
-        baseOffset = (self._lastCenter[0] - cx, self._lastCenter[1] - cy)
-        offset = (self._lastCenter[0] - cx + x, self._lastCenter[1] - cy + y)  # x ; y
+
+        #  Check if align offset doesn't break cropping
+        baseOffset = (0, 0)
+        if self._currentAlign == AlignPos.BOTTOM_LEFT:
+            (ax, ay, aw, ah) = self._lastRectangle
+            baseOffset = (ax - x, ay + ah - y - h)
+        elif self._currentAlign == AlignPos.BOTTOM_CENTER:
+            (ax, ay, aw, ah) = self._lastRectangle
+            baseOffset = (ax + aw//2 - x - w//2, ay + ah - y - h)
+        elif self._currentAlign == AlignPos.CENTER:
+            baseOffset = (self._lastCenter[0] - cx, self._lastCenter[1] - cy)
+
+        offset = (baseOffset[0] + x, baseOffset[1] + y)  # x ; y
 
         # it works now but should rename a bit
         templatedImg = base.copy()
@@ -222,12 +255,23 @@ class BlockDetector(object):
         croppedBase = processedImg[y:y+h, x:x+w]
 
         emptyImg = np.zeros(shape=[maxH, maxW, 3])
+
+        baseX, baseY = 0, 0
+        templateX, templateY = 0, 0
+        if self._currentAlign == AlignPos.BOTTOM_LEFT:
+            baseX, baseY = 0, (maxH - croppedBase.shape[0])
+            templateX, templateY = 0, (maxH - croppedTemplate.shape[0])
+        elif self._currentAlign == AlignPos.BOTTOM_CENTER:
+            baseX, baseY = (maxW - croppedBase.shape[1]) // 2, (maxH - croppedBase.shape[0])
+            templateX, templateY = (maxW - croppedTemplate.shape[1]) // 2, (maxH - croppedTemplate.shape[0])
+        elif self._currentAlign == AlignPos.CENTER:
+            baseX, baseY = (maxW - croppedBase.shape[1]) // 2, (maxH - croppedBase.shape[0]) // 2
+            templateX, templateY = (maxW - croppedTemplate.shape[1])//2, (maxH - croppedTemplate.shape[0])//2
+
         # base
-        baseX, baseY = (maxW - croppedBase.shape[1])//2, (maxH - croppedBase.shape[0])//2
         baseResized = emptyImg.copy()
         baseResized[baseY:(baseY+croppedBase.shape[0]), baseX:(baseX+croppedBase.shape[1])] = croppedBase
         # template
-        templateX, templateY = (maxW - croppedTemplate.shape[1])//2, (maxH - croppedTemplate.shape[0])//2
         templateResized = emptyImg.copy()
         templateResized[templateY:(templateY+croppedTemplate.shape[0]), templateX:(templateX+croppedTemplate.shape[1])] = croppedTemplate
 
@@ -256,7 +300,10 @@ class BlockDetector(object):
         toSend = {
             'filledIn': self._templateFilledIn / self._templatePixel * 100.0,
             'filledOut': self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0,
-            'croppedBase': base64.b64encode(buffer).decode('utf-8')
+            'croppedBase': base64.b64encode(buffer).decode('utf-8'),
+            'ratio': float(croppedBase.shape[1]) / float(croppedBase.shape[0]),
+            'width': float(croppedBase.shape[1]) / self._magicNumber,
+            'height': float(croppedBase.shape[0]) / self._magicNumber,
         }
         self._comPipe.send(json.dumps(toSend))
         """self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
@@ -309,6 +356,13 @@ class BlockDetector(object):
 
     def RunDetection(self):
         self._capture = cv2.VideoCapture(0)
+
+        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self._camWidth)
+        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self._camHeight)
+        width = self._capture.get(cv2.CAP_PROP_FRAME_WIDTH)
+        height = self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
+
+        print('{}x{}'.format(width, height))
         while True:
             ret, frame = self._capture.read()
             cv2.imshow('base', frame)
