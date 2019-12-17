@@ -26,8 +26,10 @@ class BlockDetector(object):
         self._comPipe = comPipe
         self._capture = None
         self._lastContours = None
-        self._lastRectangle = None
-        self._lastCenter = None
+        self._lastRectangles = None
+        self._lastCenters = None
+        self._globalRectangle = None
+        self._globalCenter = None
         self._imgWithTemplate = None
         self._currentAlign = AlignPos.BOTTOM_CENTER
 
@@ -74,6 +76,7 @@ class BlockDetector(object):
         cv2.namedWindow('Parameters')
         cv2.createTrackbar('Threshold', 'Parameters', 0, 255, self._emptyCallBack)
         cv2.createTrackbar('FillContours', 'Parameters', 0, 1, self._emptyCallBack)
+        cv2.createTrackbar('MinSizeIgnore', 'Parameters', 0, 1000, self._emptyCallBack)
         cv2.createTrackbar('UseTemplate', 'Parameters', 0, 1, self._emptyCallBack)
         cv2.createTrackbar('Template', 'Parameters', 0, 10, self._emptyCallBack)
 
@@ -88,6 +91,8 @@ class BlockDetector(object):
 
     def FindCountours(self, processedImg, base):
         # Find contours
+        self._lastRectangles = []
+        self._lastCenters = []
         self._lastContours, h = cv2.findContours(processedImg.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in self._lastContours:
             if cv2.getTrackbarPos('FillContours', 'Parameters') == 1:
@@ -95,10 +100,11 @@ class BlockDetector(object):
             else:
                 cv2.drawContours(base, [contour], -1, (255, 0, 0), 2)
             x, y, w, h = cv2.boundingRect(contour)
-            self._lastRectangle = (x, y, w, h)
-            self._lastCenter = (int((x + x + w) / 2), int((y + y + h) / 2))
+            self._lastRectangles.append((x, y, w, h))
+            center = (int((x + x + w) / 2), int((y + y + h) / 2))
+            self._lastCenters.append(center)
             cv2.rectangle(base, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.circle(base, self._lastCenter, 2, (0, 255, 0), -1)
+            cv2.circle(base, center, 2, (0, 255, 0), -1)
         return base
 
     def CheckFunction(self, frame):
@@ -193,13 +199,13 @@ class BlockDetector(object):
         #  Check if align offset doesn't break cropping
         baseOffset = (0, 0)
         if self._currentAlign == AlignPos.BOTTOM_LEFT:
-            (ax, ay, aw, ah) = self._lastRectangle
+            (ax, ay, aw, ah) = self._globalRectangle
             baseOffset = (ax - x, ay + ah - y - h)
         elif self._currentAlign == AlignPos.BOTTOM_CENTER:
-            (ax, ay, aw, ah) = self._lastRectangle
+            (ax, ay, aw, ah) = self._globalRectangle
             baseOffset = (ax + aw//2 - x - w//2, ay + ah - y - h)
         elif self._currentAlign == AlignPos.CENTER:
-            baseOffset = (self._lastCenter[0] - cx, self._lastCenter[1] - cy)
+            baseOffset = (self._globalCenter[0] - cx, self._globalCenter[1] - cy)
 
         offset = (baseOffset[0] + x, baseOffset[1] + y)  # x ; y
 
@@ -218,7 +224,7 @@ class BlockDetector(object):
         startW = -offset[0] if offset[0] < 0 else 0
         startH = -offset[1] if offset[1] < 0 else 0
 
-        print(self._lastCenter)
+        print(self._globalCenter)
         print(self._templateImgs[str(self._currentTemplate)]['boxCenter'])
         print(offset)
         print(croppedTemplate.shape)
@@ -236,13 +242,38 @@ class BlockDetector(object):
             templatedImg[minY:maxY, minX:maxX, c] = (alphaTemplate * croppedTemplate[startH:maxH, startW:maxW, c] + inversedAlpha * templatedImg[minY:maxY, minX:maxX, c])
 
         # Draw both bounding and center : DEBUG
-        x2, y2, w2, h2 = self._lastRectangle
+        x2, y2, w2, h2 = self._globalRectangle
         cv2.rectangle(templatedImg, (x2, y2), (x2 + w2, y2 + h2), (0, 255, 0), 2)
-        cv2.circle(templatedImg, self._lastCenter, 2, (0, 255, 0), -1)
+        cv2.circle(templatedImg, self._globalCenter, 2, (0, 255, 0), -1)
         cv2.rectangle(templatedImg, (x + baseOffset[0], y + baseOffset[1]), (x + w + baseOffset[0], y + h + baseOffset[1]), (255, 0, 0), 2)
         cv2.circle(templatedImg, (cx + baseOffset[0], cy + baseOffset[1]), 2, (255, 0, 0), -1)
 
         return templatedImg
+
+    def PrepareCompare(self, processedImg):
+        minSize = cv2.getTrackbarPos('MinSizeIgnore', 'Parameters')
+        i = 0
+        topLeftCornerX = processedImg.shape[1]
+        topLeftCornerY = processedImg.shape[0]
+        bottomRightCornerX = 0
+        bottomRightCornerY = 0
+        base = np.zeros(shape=processedImg.shape)
+        for contour in self._lastContours:
+            x, y, w, h = self._lastRectangles[i]
+            if (w*h) > minSize:
+                cv2.fillPoly(base, [contour], (0, 0, 255))
+                x2 = x + w
+                y2 = y + h
+                topLeftCornerX = min(topLeftCornerX, x)
+                topLeftCornerY = min(topLeftCornerY, y)
+                bottomRightCornerX = max(bottomRightCornerX, x2)
+                bottomRightCornerY = max(bottomRightCornerY, y2)
+            i += 1
+        newW = bottomRightCornerX - topLeftCornerX
+        newH = bottomRightCornerY - topLeftCornerY
+        self._globalRectangle = (topLeftCornerX, topLeftCornerY, newW, newH)
+        self._globalCenter = (int((topLeftCornerX + bottomRightCornerX) / 2), int((topLeftCornerY + bottomRightCornerY) / 2))
+        return base
 
     def CompareInOutValues2(self, templateNbr, processedImg):
         templateImg = self._templateImgs[str(templateNbr)]['filled']
@@ -251,10 +282,8 @@ class BlockDetector(object):
         maxH = h
         croppedTemplate = templateImg[y:y+h, x:x+w]
 
-        base = np.zeros(shape=processedImg.shape)
-        for contour in self._lastContours:
-            cv2.fillPoly(base, [contour], (0, 0, 255))
-        x, y, w, h = self._lastRectangle
+        base = self.PrepareCompare(processedImg)
+        x, y, w, h = self._globalRectangle
         if w > maxW:
             maxW = w
         if h > maxH:
@@ -468,6 +497,7 @@ class BlockDetector(object):
                     # self._currentTemplate = cv2.getTrackbarPos('Template', 'Parameters')
                     # if str(self._currentTemplate) in self._templateImgs.keys():
                     # imgWithTp = cv2.addWeighted(frame, 0.8, self._templateImgs[str(self._currentTemplate)]['crt'], 1, 0)
+                    self.PrepareCompare(frame)
                     self._imgWithTemplate = self.DisplayTemplate(frame)
                     imgWithTp = self.DisplayTextFilledPercent(self._imgWithTemplate.copy())
                     cv2.imshow('WebcamTemplate', imgWithTp)
