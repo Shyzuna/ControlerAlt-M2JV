@@ -277,11 +277,11 @@ class BlockDetector(object):
         topLeftCornerY = processedImg.shape[0]
         bottomRightCornerX = 0
         bottomRightCornerY = 0
-        base = np.zeros(shape=(processedImg.shape[0], processedImg.shape[1], 4))
+        base = np.zeros(shape=processedImg.shape)
         for contour in self._lastContours:
             x, y, w, h = self._lastRectangles[i]
             if (w*h) > minSize:
-                cv2.fillPoly(base, [contour], (0, 0, 255, 255))
+                cv2.fillPoly(base, [contour], (0, 0, 255))
                 x2 = x + w
                 y2 = y + h
                 topLeftCornerX = min(topLeftCornerX, x)
