@@ -21,7 +21,7 @@ def TcpSocketCom(comPipe):
                 while True:
                     if comPipe.poll():
                         pipeVal = comPipe.recv()
-                        bDetectVal = pipeVal # now receive both tempalte in out & countdown stop/start
+                        bDetectVal = pipeVal # now receive both template in out & countdown stop/start
                         newVal = True
                         print("Received from opencv {}:{}".format(os.getpid(), pipeVal))
 
@@ -41,7 +41,7 @@ def TcpSocketCom(comPipe):
                             response = 'Empty'
                     elif reqCode == NetworkMessageType.CHANGE_TEMPLATE.value:
                         print("Ask Change template to {}".format(arg))
-                        comPipe.send(arg)
+                        comPipe.send(strData)
                         baseTime = time.time()
                         while True:  # Avoid looking for useless inOut values
                             pipeVal = comPipe.recv()
@@ -56,6 +56,29 @@ def TcpSocketCom(comPipe):
                                 print('Template change timed out.')
                                 response = str(NetworkMessageType.ERROR_TEMPLATE_CHANGE.value)
                                 break
+                    elif reqCode == NetworkMessageType.MENU_MODE.value:
+                        print("Ask Menu mode")
+                        comPipe.send(strData)
+                        baseTime = time.time()
+                        while True:  # Avoid looking for useless inOut values
+                            pipeVal = comPipe.recv()
+                            if type(pipeVal) is int:  # better check ?
+                                response = str(pipeVal)
+                                if pipeVal == NetworkMessageType.MENU_MODE_OP.value:
+                                    print('Menu mode Op')
+                                break
+                            if time.time() - baseTime > 5:
+                                print('Menu mode change timed out.')
+                                response = str(NetworkMessageType.MENU_MODE_FAIL.value)
+                                break
+                    elif reqCode == NetworkMessageType.MENU_CHECK.value:
+                        #print("Menu Check")
+                        # Should split ask in out and countdown start/stop
+                        if newVal:
+                            response = bDetectVal
+                            newVal = False
+                        else:
+                            response = 'Empty'
                     else:  # Most likely impossible
                         print('Unknown request code {}'.format(reqCode))
                         response = 'BUG'

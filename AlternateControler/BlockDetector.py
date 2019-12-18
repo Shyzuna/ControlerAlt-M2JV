@@ -9,6 +9,7 @@ from pathlib import Path
 from AlternateControler.NetworkMessageType import NetworkMessageType
 import params.Params as Params
 from AlternateControler.AlignPos import AlignPos
+from AlternateControler.BlockCommunicator import ParseReceivedMsg
 
 """
 ## TODO
@@ -18,6 +19,9 @@ from AlternateControler.AlignPos import AlignPos
 ## CAM REZ TO CHANGE ?
 ## WTF MAGIC NUMBER 1.6 .... =O ?!
 """
+
+CHECKIN_PERCENT = 80.0
+CHECKOUT_PERCENT = 20.0
 
 class BlockDetector(object):
     def __init__(self, comPipe):
@@ -33,7 +37,10 @@ class BlockDetector(object):
         self._imgWithTemplate = None
         self._currentAlign = AlignPos.BOTTOM_CENTER
 
+        self._menuTemplates = {}
+
         self._magicNumber = 1.6  # Find from where it comes !
+        self._menuModeEnabled = False
 
         self._ratio = 16.0 / 9.0
         self._ratio = 4.0 / 3.0
@@ -47,6 +54,7 @@ class BlockDetector(object):
         self._currentTemplate = -1
         self._nextTemplateNbr = None
         self.LoadAllTemplates()
+        self.LoadMenuTemplates()
 
         self._templateFilledIn = 0.0
         self._templateFilledOut = 0.0
@@ -154,6 +162,18 @@ class BlockDetector(object):
         print('New template Saved and Added to {}'.format(self._nextTemplateNbr))
         self._nextTemplateNbr += 1
 
+    def LoadMenuTemplates(self):
+        l = ['Play', 'Return', 'Credits', 'Quit']
+        for name in l:
+            self._menuTemplates[name] = {}
+            self._menuTemplates[name]['crt'] = cv2.imread(str(Path.joinpath(self._templatePath, 'crt{}.png'.format(name))), cv2.IMREAD_UNCHANGED)
+            self._menuTemplates[name]['filled'] = cv2.imread(str(Path.joinpath(self._templatePath, 'filled{}.png'.format(name))), cv2.IMREAD_UNCHANGED)
+            cnt, h = cv2.findContours(cv2.cvtColor(self._menuTemplates[name]['filled'], cv2.COLOR_BGR2GRAY), cv2.RETR_EXTERNAL,
+                                      cv2.CHAIN_APPROX_SIMPLE)
+            x, y, w, h = cv2.boundingRect(cnt[0])
+            self._menuTemplates[name]['boundingBox'] = (x, y, w, h)
+            self._menuTemplates[name]['boxCenter'] = (int((x + x + w) / 2), int((y + y + h) / 2))
+
     def LoadAllTemplates(self):
         last = -1
         regex = r'(filled|crt)(\d+)\.png'
@@ -190,10 +210,10 @@ class BlockDetector(object):
         self._nextTemplateNbr = last + 1
         print('Templates loaded ({})'.format(len(self._templateImgs)))
 
-    def DisplayTemplate(self, base):
-        crtTemplate = self._templateImgs[str(self._currentTemplate)]['crt']
-        x, y, w, h = self._templateImgs[str(self._currentTemplate)]['boundingBox']
-        cx, cy = self._templateImgs[str(self._currentTemplate)]['boxCenter']
+    def DisplayTemplate(self, base, template):
+        crtTemplate = template['crt']
+        x, y, w, h = template['boundingBox']
+        cx, cy = template['boxCenter']
         croppedTemplate = crtTemplate[y:y+h, x:x+w]
 
         #  Check if align offset doesn't break cropping
@@ -225,7 +245,7 @@ class BlockDetector(object):
         startH = -offset[1] if offset[1] < 0 else 0
 
         print(self._globalCenter)
-        print(self._templateImgs[str(self._currentTemplate)]['boxCenter'])
+        print(template['boxCenter'])
         print(offset)
         print(croppedTemplate.shape)
         print(maxX)
@@ -275,9 +295,95 @@ class BlockDetector(object):
         self._globalCenter = (int((topLeftCornerX + bottomRightCornerX) / 2), int((topLeftCornerY + bottomRightCornerY) / 2))
         return base
 
-    def CompareInOutValues2(self, templateNbr, processedImg):
-        templateImg = self._templateImgs[str(templateNbr)]['filled']
-        x, y, w, h = self._templateImgs[str(templateNbr)]['boundingBox']
+    def CompareInOutMenu(self, processedImg):
+        # some parts are pretty close to the CompareInOut2 ....
+        base = self.PrepareCompare(processedImg)
+        x, y, w, h = self._globalRectangle
+        croppedBase = base[y:y+h, x:x+w]
+
+        values = {}
+
+        for name, template in self._menuTemplates.items():
+            values[name] = {}
+            templateImg = template['filled']
+            x, y, w, h = template['boundingBox']
+            croppedTemplate = templateImg[y:y + h, x:x + w]
+            maxW = w
+            maxH = h
+
+            x, y, w, h = self._globalRectangle
+            if w > maxW:
+                maxW = w
+            if h > maxH:
+                maxH = h
+
+            emptyImg = np.zeros(shape=[maxH, maxW, 3])
+            baseX, baseY = 0, 0
+            templateX, templateY = 0, 0
+            if self._currentAlign == AlignPos.BOTTOM_LEFT:
+                baseX, baseY = 0, (maxH - croppedBase.shape[0])
+                templateX, templateY = 0, (maxH - croppedTemplate.shape[0])
+            elif self._currentAlign == AlignPos.BOTTOM_CENTER:
+                baseX, baseY = (maxW - croppedBase.shape[1]) // 2, (maxH - croppedBase.shape[0])
+                templateX, templateY = (maxW - croppedTemplate.shape[1]) // 2, (maxH - croppedTemplate.shape[0])
+            elif self._currentAlign == AlignPos.CENTER:
+                baseX, baseY = (maxW - croppedBase.shape[1]) // 2, (maxH - croppedBase.shape[0]) // 2
+                templateX, templateY = (maxW - croppedTemplate.shape[1]) // 2, (maxH - croppedTemplate.shape[0]) // 2
+
+            # base
+            baseResized = emptyImg.copy()
+            baseResized[baseY:(baseY + croppedBase.shape[0]), baseX:(baseX + croppedBase.shape[1])] = croppedBase
+            # template
+            templateResized = emptyImg.copy()
+            templateResized[templateY:(templateY + croppedTemplate.shape[0]),
+            templateX:(templateX + croppedTemplate.shape[1])] = croppedTemplate
+
+            cv2.imshow('baseCropped', baseResized)
+            cv2.imshow('templateCropped', templateResized)
+
+            templateP = 0
+            inP = 0
+            outP = 0
+            for y in range(0, maxH):
+                for x in range(0, maxW):
+                    if np.all(templateResized[y, x] == (0, 0, 255)):
+                        templateP += 1
+                        if np.all(baseResized[y, x] == (0, 0, 255)):
+                            inP += 1
+                    elif np.all(baseResized[y, x] == (0, 0, 255)):
+                        outP += 1
+            values[name]['filledIn'] = inP / templateP * 100.0
+            values[name]['filledOut'] = outP / (outP + inP) * 100.0
+            print('template : {}\nin : {}\nout : {}\n'.format(name, values[name]['filledIn'], values[name]['filledOut']))
+            print('-------------------')
+
+        maxP = 0
+        minP = 100
+        current = 'None'
+        for name, percent in values.items():
+            if percent['filledIn'] >= CHECKIN_PERCENT and percent['filledOut'] < CHECKOUT_PERCENT:
+                if percent['filledOut'] < minP:
+                    current = name
+                    maxP = percent['filledIn']
+                    minP = percent['filledOut']
+
+        retval, buffer = cv2.imencode('.png', croppedBase)
+
+        toSend = {
+            'name': current,
+            'filledIn': maxP,
+            'filledOut': minP,
+            'croppedBase': base64.b64encode(buffer).decode('utf-8'),
+            'ratio': float(croppedBase.shape[1]) / float(croppedBase.shape[0]),
+            'width': float(croppedBase.shape[1]) / self._magicNumber,
+            'height': float(croppedBase.shape[0]) / self._magicNumber,
+        }
+        self._comPipe.send(json.dumps(toSend))
+
+
+    def CompareInOutValues2(self, processedImg, template):
+        templateImg = template['filled']
+        x, y, w, h = template['boundingBox']
         maxW = w
         maxH = h
         croppedTemplate = templateImg[y:y+h, x:x+w]
@@ -334,6 +440,7 @@ class BlockDetector(object):
         retval, buffer = cv2.imencode('.png', croppedBase)
 
         toSend = {
+            'name': 'None',
             'filledIn': self._templateFilledIn / self._templatePixel * 100.0,
             'filledOut': self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0,
             'croppedBase': base64.b64encode(buffer).decode('utf-8'),
@@ -448,12 +555,18 @@ class BlockDetector(object):
             if self._comPipe.poll():
                 pipeVal = self._comPipe.recv()
                 print("Received from Com {}:{}".format(os.getpid(), pipeVal))
-                # Can only receive template value atm
-                if str(pipeVal) in self._templateImgs.keys():
-                    self._currentTemplate = pipeVal
-                    self._comPipe.send(NetworkMessageType.TEMPLATE_CHANGED.value)
-                else:
-                    self._comPipe.send(NetworkMessageType.TEMPLATE_UNKNOWN.value)
+                reqCode, args = ParseReceivedMsg(str(pipeVal))
+                print(reqCode)
+                if reqCode == NetworkMessageType.CHANGE_TEMPLATE.value:
+                    if str(args) in self._templateImgs.keys():
+                        self._currentTemplate = args
+                        self._comPipe.send(NetworkMessageType.TEMPLATE_CHANGED.value)
+                        self._menuModeEnabled = False
+                    else:
+                        self._comPipe.send(NetworkMessageType.TEMPLATE_UNKNOWN.value)
+                elif reqCode == NetworkMessageType.MENU_MODE.value:
+                    self._menuModeEnabled = True
+                    self._comPipe.send(NetworkMessageType.MENU_MODE_OP.value)
 
             #waitPattern = self.TryDetetectWait(frame.copy())
             #cv2.imshow('waitPattern', waitPattern)
@@ -463,11 +576,14 @@ class BlockDetector(object):
                 if self._countdown > self._baseCountdown:
                     print('Do Check in/out')
                     self._checkIsDone = True
-                    if self._currentTemplate != -1:
+                    if self._menuModeEnabled:
+                        self.CompareInOutMenu(frame.copy())
+                        # should modify Display template & text filled percent to use here
+                    elif self._currentTemplate != -1:
                         currentTime = time.time()
-                        self.CompareInOutValues2(self._currentTemplate, frame.copy())
+                        self.CompareInOutValues2(frame.copy(), self._templateImgs[str(self._currentTemplate)])
                         if self._imgWithTemplate is None:
-                            self._imgWithTemplate = self.DisplayTemplate(frame)
+                            self._imgWithTemplate = self.DisplayTemplate(frame, self._templateImgs[str(self._currentTemplate)])
                         imgWithTp = self.DisplayTextFilledPercent(self._imgWithTemplate.copy())
                         cv2.imshow('WebcamTemplate', imgWithTp)
                         print('Time elipsed : {}s'.format(time.time() - currentTime))
@@ -487,9 +603,9 @@ class BlockDetector(object):
                 #if cv2.getTrackbarPos('UseTemplate', 'Parameters') == 1:
                 if self._currentTemplate != -1:
                     currentTime = time.time()
-                    self.CompareInOutValues2(self._currentTemplate, frame.copy())
+                    self.CompareInOutValues2(frame.copy(), self._templateImgs[str(self._currentTemplate)])
                     if self._imgWithTemplate is None:
-                        self._imgWithTemplate = self.DisplayTemplate(frame)
+                        self._imgWithTemplate = self.DisplayTemplate(frame, self._templateImgs[str(self._currentTemplate)])
                     imgWithTp = self.DisplayTextFilledPercent(self._imgWithTemplate.copy())
                     cv2.imshow('WebcamTemplate', imgWithTp)
                     print('Time elipsed : {}s'.format(time.time() - currentTime))
@@ -500,7 +616,7 @@ class BlockDetector(object):
                     # if str(self._currentTemplate) in self._templateImgs.keys():
                     # imgWithTp = cv2.addWeighted(frame, 0.8, self._templateImgs[str(self._currentTemplate)]['crt'], 1, 0)
                     self.PrepareCompare(frame)
-                    self._imgWithTemplate = self.DisplayTemplate(frame)
+                    self._imgWithTemplate = self.DisplayTemplate(frame, self._templateImgs[str(self._currentTemplate)])
                     imgWithTp = self.DisplayTextFilledPercent(self._imgWithTemplate.copy())
                     cv2.imshow('WebcamTemplate', imgWithTp)
 
