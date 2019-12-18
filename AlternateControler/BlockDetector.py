@@ -39,7 +39,7 @@ class BlockDetector(object):
 
         self._menuTemplates = {}
 
-        self._magicNumber = 1.6  # Find from where it comes !
+        self._magicNumber = 2  # Find from where it comes !
         self._menuModeEnabled = False
 
         self._ratio = 16.0 / 9.0
@@ -375,8 +375,8 @@ class BlockDetector(object):
             'filledOut': minP,
             'croppedBase': base64.b64encode(buffer).decode('utf-8'),
             'ratio': float(croppedBase.shape[1]) / float(croppedBase.shape[0]),
-            'width': float(croppedBase.shape[1]) / self._magicNumber,
-            'height': float(croppedBase.shape[0]) / self._magicNumber,
+            'width': float(croppedBase.shape[1]),
+            'height': float(croppedBase.shape[0]),
         }
         self._comPipe.send(json.dumps(toSend))
 
@@ -445,8 +445,8 @@ class BlockDetector(object):
             'filledOut': self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0,
             'croppedBase': base64.b64encode(buffer).decode('utf-8'),
             'ratio': float(croppedBase.shape[1]) / float(croppedBase.shape[0]),
-            'width': float(croppedBase.shape[1]) / self._magicNumber,
-            'height': float(croppedBase.shape[0]) / self._magicNumber,
+            'width': float(croppedBase.shape[1]),
+            'height': float(croppedBase.shape[0]),
         }
         self._comPipe.send(json.dumps(toSend))
         """self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
