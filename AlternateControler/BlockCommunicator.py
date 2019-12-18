@@ -21,8 +21,7 @@ def TcpSocketCom(comPipe):
                 while True:
                     if comPipe.poll():
                         pipeVal = comPipe.recv()
-                        inOut = pipeVal
-                        bDetectVal = pipeVal
+                        bDetectVal = pipeVal # now receive both tempalte in out & countdown stop/start
                         newVal = True
                         print("Received from opencv {}:{}".format(os.getpid(), pipeVal))
 
@@ -32,14 +31,15 @@ def TcpSocketCom(comPipe):
                     #print("Received from client : {}".format(data))
                     strData = data.decode('utf-8')
                     reqCode, arg = ParseReceivedMsg(strData)
-                    if reqCode == NetworkMessageType.ASK_SHAPE_INOUT.value[0]:  # why [0] ??
+                    # Should split ask in out and countdown start/stop
+                    if reqCode == NetworkMessageType.ASK_SHAPE_INOUT.value:
                         #print("Ask In Out")
                         if newVal:
                             response = bDetectVal
                             newVal = False
                         else:
                             response = 'Empty'
-                    elif reqCode == NetworkMessageType.CHANGE_TEMPLATE.value[0]:  # why [0] ??
+                    elif reqCode == NetworkMessageType.CHANGE_TEMPLATE.value:
                         print("Ask Change template to {}".format(arg))
                         comPipe.send(arg)
                         baseTime = time.time()
@@ -47,14 +47,14 @@ def TcpSocketCom(comPipe):
                             pipeVal = comPipe.recv()
                             if type(pipeVal) is int:  # better check ?
                                 response = str(pipeVal)
-                                if pipeVal == NetworkMessageType.TEMPLATE_CHANGED.value[0]:
+                                if pipeVal == NetworkMessageType.TEMPLATE_CHANGED.value:
                                     print('Template changed to {}'.format(arg))
-                                elif pipeVal == NetworkMessageType.TEMPLATE_UNKNOWN.value[0]:
+                                elif pipeVal == NetworkMessageType.TEMPLATE_UNKNOWN.value:
                                     print('Template {} unknown'.format(arg))
                                 break
                             if time.time() - baseTime > 5:
                                 print('Template change timed out.')
-                                response = str(NetworkMessageType.ERROR_TEMPLATE_CHANGE.value[0])
+                                response = str(NetworkMessageType.ERROR_TEMPLATE_CHANGE.value)
                                 break
                     else:  # Most likely impossible
                         print('Unknown request code {}'.format(reqCode))

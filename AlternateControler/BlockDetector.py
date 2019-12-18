@@ -400,10 +400,12 @@ class BlockDetector(object):
             self._isWaiting = True
             self._checkIsDone = False
             print('Now waiting')
+            self._comPipe.send(str(NetworkMessageType.COUNTDOWN_STOP.value))
         elif self._isWaiting and percent < self._whiteWaitPercent:
             print('Start countdown')
             self._isWaiting = False
             self._countdown = 0.0
+            self._comPipe.send(str(NetworkMessageType.COUNTDOWN_START.value))
         cv2.imshow('DetectWait', base)
 
     def DisplayTextFilledPercent(self, imgWithTp):
@@ -449,9 +451,9 @@ class BlockDetector(object):
                 # Can only receive template value atm
                 if str(pipeVal) in self._templateImgs.keys():
                     self._currentTemplate = pipeVal
-                    self._comPipe.send(NetworkMessageType.TEMPLATE_CHANGED.value[0])
+                    self._comPipe.send(NetworkMessageType.TEMPLATE_CHANGED.value)
                 else:
-                    self._comPipe.send(NetworkMessageType.TEMPLATE_UNKNOWN.value[0])
+                    self._comPipe.send(NetworkMessageType.TEMPLATE_UNKNOWN.value)
 
             #waitPattern = self.TryDetetectWait(frame.copy())
             #cv2.imshow('waitPattern', waitPattern)
