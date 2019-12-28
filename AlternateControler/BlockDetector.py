@@ -20,7 +20,7 @@ from AlternateControler.BlockCommunicator import ParseReceivedMsg
 ## WTF MAGIC NUMBER 1.6 .... =O ?!
 """
 
-CHECKIN_PERCENT = 80.0
+CHECKIN_PERCENT = 70.0
 CHECKOUT_PERCENT = 20.0
 
 class BlockDetector(object):
@@ -352,8 +352,12 @@ class BlockDetector(object):
                             inP += 1
                     elif np.all(baseResized[y, x] == (0, 0, 255)):
                         outP += 1
-            values[name]['filledIn'] = inP / templateP * 100.0
-            values[name]['filledOut'] = outP / (outP + inP) * 100.0
+            try:
+                values[name]['filledIn'] = inP / templateP * 100.0
+                values[name]['filledOut'] = outP / (outP + inP) * 100.0
+            except Exception as e:
+                values[name]['filledIn'] = 0
+                values[name]['filledOut'] = 0
             print('template : {}\nin : {}\nout : {}\n'.format(name, values[name]['filledIn'], values[name]['filledOut']))
             print('-------------------')
 
@@ -366,19 +370,20 @@ class BlockDetector(object):
                     current = name
                     maxP = percent['filledIn']
                     minP = percent['filledOut']
-
-        retval, buffer = cv2.imencode('.png', croppedBase)
-
-        toSend = {
-            'name': current,
-            'filledIn': maxP,
-            'filledOut': minP,
-            'croppedBase': base64.b64encode(buffer).decode('utf-8'),
-            'ratio': float(croppedBase.shape[1]) / float(croppedBase.shape[0]),
-            'width': float(croppedBase.shape[1]),
-            'height': float(croppedBase.shape[0]),
-        }
-        self._comPipe.send(json.dumps(toSend))
+        try:
+            retval, buffer = cv2.imencode('.png', croppedBase)
+            toSend = {
+                'name': current,
+                'filledIn': maxP,
+                'filledOut': minP,
+                'croppedBase': base64.b64encode(buffer).decode('utf-8'),
+                'ratio': float(croppedBase.shape[1]) / float(croppedBase.shape[0]),
+                'width': float(croppedBase.shape[1]),
+                'height': float(croppedBase.shape[0]),
+            }
+            self._comPipe.send(json.dumps(toSend))
+        except Exception as e:
+            pass
 
 
     def CompareInOutValues2(self, processedImg, template):
@@ -437,21 +442,23 @@ class BlockDetector(object):
         self._templateFilledOut = float(outP)
         self._templatePixel = float(templateP)
 
-        retval, buffer = cv2.imencode('.png', croppedBase)
-
-        toSend = {
-            'name': 'None',
-            'filledIn': self._templateFilledIn / self._templatePixel * 100.0,
-            'filledOut': self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0,
-            'croppedBase': base64.b64encode(buffer).decode('utf-8'),
-            'ratio': float(croppedBase.shape[1]) / float(croppedBase.shape[0]),
-            'width': float(croppedBase.shape[1]),
-            'height': float(croppedBase.shape[0]),
-        }
-        self._comPipe.send(json.dumps(toSend))
-        """self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
-                                          self._templateFilledOut / (
-                                                      self._templateFilledOut + self._templateFilledIn) * 100.0))"""
+        try:
+            retval, buffer = cv2.imencode('.png', croppedBase)
+            toSend = {
+                'name': 'None',
+                'filledIn': self._templateFilledIn / self._templatePixel * 100.0,
+                'filledOut': self._templateFilledOut / (self._templateFilledOut + self._templateFilledIn) * 100.0,
+                'croppedBase': base64.b64encode(buffer).decode('utf-8'),
+                'ratio': float(croppedBase.shape[1]) / float(croppedBase.shape[0]),
+                'width': float(croppedBase.shape[1]),
+                'height': float(croppedBase.shape[0]),
+            }
+            self._comPipe.send(json.dumps(toSend))
+            """self._comPipe.send("{},{}".format(self._templateFilledIn / self._templatePixel * 100.0,
+                                              self._templateFilledOut / (
+                                                          self._templateFilledOut + self._templateFilledIn) * 100.0))"""
+        except Exception as e:
+            pass
 
 
     def CompareInOutValues(self, templateNbr, processedImg):
